@@ -326,18 +326,14 @@ class RespiratorDisplay(QWidget):
             string = ser.readline()
             print(string)
             msg = string.decode('utf-8')
-            #msg = "fcom5
-            #  rate, Inhale, Exhale"
             dataList = msg.split(",")
-            #dataList = [flow rate , Inhale, Exhale, alarm code] as a list
+
         else:
-            #dataList = [0, 0, 0, 'N']
             dataList = [0, 0, 0]
 
             #dataList = [flowrate in, pressure in, pressure ex, alarm cause, flowrate in, flowrate ex, vol in, vol out]
              
         try:
-            #number = float(dataList[0])*60 #slps -> SLPM
             number = float(dataList[0])*60
             self.rawdata = self.rawdata[1:] + [number]
 

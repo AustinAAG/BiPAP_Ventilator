@@ -8,7 +8,6 @@
 #ifndef CALCULATIONS_H_
 #define CALCULATIONS_H_
 
-//float getFlowRate(float p_delta);
 float getFlowRate(float p_delta, float N_N2, float N_O2, float N_CO2,
                   float N_H2O, float T_air, float calib_c, int isInhale);
 float getVolume(float p_current, float p_past, float frequency);

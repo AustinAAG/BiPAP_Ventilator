@@ -60,16 +60,6 @@ float getVolume(float flowrate_current, float flowrate_past, float frequency)
     flowrate_past *= 1000; // scale by 1000
     float period = 1 / frequency; //Period in seconds, "delta x of integral"
 
-    float flowrate_min = 0;
-    if (flowrate_current < flowrate_past)
-    {
-        flowrate_min = flowrate_current;
-    }
-    else
-    {
-        flowrate_min = flowrate_past;
-    }
-
     float volume = period * flowrate_current;
 
     return volume;

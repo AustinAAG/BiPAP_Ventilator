@@ -209,7 +209,7 @@ TIMER_A_CLOCKSOURCE_ACLK,                       //clockSource
         };
 
 /*
- * Main Function runs on flash.  Intializes all the modules used for this code.  Sets up clock speeds.
+ * Main Function runs on flash.  Initializes all the modules used for this code.  Sets up clock speeds.
  * Configure Pins and Interrupts that will be in use.  Finally enter an infinite loop looking for
  * interrupts.
  */
@@ -267,11 +267,11 @@ int main(void)
     /* Configuring GPIO2.4 as peripheral output for PWM */
     MAP_GPIO_setAsPeripheralModuleFunctionOutputPin(
     GPIO_PORT_P2,
-                                                    GPIO_PIN5, // 4
+                                                    GPIO_PIN5,//4
             GPIO_PRIMARY_MODULE_FUNCTION);
 
     /* start PWM signal */
-    MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig);
+    MAP_Timer_A_generatePWM(TIMER_A1_BASE, &pwmConfig);
 
     ///////////////////////////UART Configuration/////////////////////////////
     /* Selecting P1.2 and P1.3 in UART mode */
@@ -315,9 +315,9 @@ int main(void)
      * to automatic iteration after it is triggered*/
     MAP_ADC14_setSampleHoldTrigger(ADC_TRIGGER_SOURCE1, false);
 
-    /* Enabling the interrupt when a conversion on channel 1 is complete and
+    /* Enabling the interrupt when a conversion on channel 6 is complete and
      * enabling conversions */
-    MAP_ADC14_enableInterrupt(ADC_INT6);
+    MAP_ADC14_enableInterrupt(ADC_INT0);
     MAP_ADC14_enableConversion();
 
     /* Enabling Interrupts */
@@ -389,8 +389,11 @@ int main(void)
 }
 
 /*******************************************************************************
- * eUSCIB0 ISR. The repeated start and transmit/receive operations for I2C
- * happen within this ISR.
+ * Interrupt handler for repeated stop and transmit data for I2C transducer on
+ * bus 0.  Receives all bytes from the buffer then translates to a float.  This
+ * float is then adjusted to account for bias in the transducer.
+ *
+ * last edited: 5/12/2021
  *******************************************************************************/
 void EUSCIB0_IRQHandler(void)
 {
@@ -445,7 +448,7 @@ void EUSCIB0_IRQHandler(void)
     float pressure_min = -2490.89; //-2500; // in Pascals
     /* calculate pressure read in with bias offset */
     p_currentIn_ =
-            -4.6
+            -6 // <-- Change this value to home the zero when no flow
                     + ((((float) (p_currentIn) - output_min)
                             * (pressure_max - pressure_min))
                             / (output_max - output_min)) + pressure_min;
@@ -453,8 +456,11 @@ void EUSCIB0_IRQHandler(void)
 }
 
 /*******************************************************************************
- * eUSCIB0 ISR. The repeated start and transmit/receive operations for I2C
- * happen within this ISR.  Follows the exact same process as EUSCIB0_IRQHandler
+ * Interrupt handler for repeated stop and transmit data for I2C transducer on
+ * bus 1.  Receives all bytes from the buffer then translates to a float.  This
+ * float is then adjusted to account for bias in the transducer.
+ *
+ * last edited: 5/12/2021
  *******************************************************************************/
 void EUSCIB1_IRQHandler(void)
 {
@@ -507,29 +513,43 @@ void EUSCIB1_IRQHandler(void)
 
     /* calculate with bias offset */
     p_currentEx_ =
-            -3.69
+            -6 // <-- Change this value to home the zero when no flow
                     + ((((float) (p_currentEx) - output_min)
                             * (pressure_max - pressure_min))
                             / (output_max - output_min)) + pressure_min;
 
 }
 
-/* This interrupt happens whenever a conversion has been completed and placed
- * into ADC_MEM0. */
+/*******************************************************************************
+ * Interrupt handler for Analog to Digital Conversions (ADC).  This interrupt
+ * is triggered by clock A (Timer_A0_Base).  When triggered the result stored in
+ * ADC Memory 0 is interpreted as a float in PSI.
+ *
+ * last edited: 5/12/2021
+ *******************************************************************************/
 void ADC14_IRQHandler(void)
 {
     uint64_t status;
     status = MAP_ADC14_getEnabledInterruptStatus(); // Read the status message that called interrupt
     MAP_ADC14_clearInterruptFlag(status); // Clear the status message so that interrupt can be called again
 
-    if (status & ADC_INT6) //If interrupt is from ADC6
+    if (status & ADC_INT0) //If interrupt is from ADC0
     {
-        adcResult = MAP_ADC14_getResult(ADC_MEM6); //Read Result from ADC6
+        adcResult = MAP_ADC14_getResult(ADC_MEM0); // Read Result from ADC0
         analog_press = adc_to_pressure(adcResult); // Calculate the pressure of that ADC conversion
     }
 }
 
-/* EUSCI A0 UART ISR - receives data from PC host */
+/*******************************************************************************
+ * Interrupt handler for handling messages received from GUI over UART.  There
+ * are 3 main cases that the GUI has.
+ * 1) Alarm reset signal is sent.  In this case flip the state of the alarm
+ * 2) Freeze state signal is sent.  In this case stop receiving & printing new
+ * data and wait
+ * 3) Init data is received.  Save all constants then begin measuring new data
+ *
+ * last edited: 5/12/2021
+ *******************************************************************************/
 void EUSCIA0_IRQHandler(void)
 {
     uint32_t status = MAP_UART_getEnabledInterruptStatus(EUSCI_A0_BASE); // Read UART interrupt status
@@ -540,12 +560,12 @@ void EUSCIA0_IRQHandler(void)
         MAP_UART_transmitData(EUSCI_A0_BASE,
         MAP_UART_receiveData(EUSCI_A0_BASE)); // Receive the data that is being read in from uart buffer
 
-        if (MAP_UART_receiveData(EUSCI_A0_BASE) == 'R') // If the message recieved is the character 'R'
+        if (MAP_UART_receiveData(EUSCI_A0_BASE) == 'R') // If the message received is the character 'R'
         {
             if (pwmConfig.dutyCycle != 0) // If the alarm is not off
             {
                 pwmConfig.dutyCycle = 0; // Set the duty cycle to 0
-                MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig); // Send 0 duty cycle to alarm turning it off
+                MAP_Timer_A_generatePWM(TIMER_A1_BASE, &pwmConfig); // Send 0 duty cycle to alarm turning it off
                 no_flow_counter = 0; // reset no flow counter
                 alarm_cause = -1; // reset alarm cause
 
@@ -553,10 +573,13 @@ void EUSCIA0_IRQHandler(void)
             else // If the alarm is off
             {
                 pwmConfig.dutyCycle = PWM_ALARM; // Set the duty cycle to 31
-                MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig); // Send the duty cycle to alarm turning it on
+                MAP_Timer_A_generatePWM(TIMER_A1_BASE, &pwmConfig); // Send the duty cycle to alarm turning it on
             }
         }
-        else // If the message is anything other than just 'R'
+        else if (MAP_UART_receiveData(EUSCI_A0_BASE) == 'X') { //If the message received is the character 'X'
+            init = true; //stop the system
+        }
+        else // If the message is anything other than just 'R' or 'X'
         {
             init_const[init_counter] = MAP_UART_receiveData(EUSCI_A0_BASE); // Store data read in into the array
             init_counter++; // increment array counter
@@ -580,7 +603,14 @@ void EUSCIA0_IRQHandler(void)
 
 }
 
-/* Timer32 Sampling ISR */
+/*******************************************************************************
+ * Interrupt handler for sampling data. Triggered by Timer 32 at 1000 Hz. If
+ * GUI has not initialized constants do nothing. If initialized then calculate
+ * filtered pressure data, volume, and state of breathing (i.e. Inhale or Exhale)
+ * If any of the values are outside limits trigger the alarm.
+ *
+ * last edited: 5/12/2021
+ *******************************************************************************/
 void T32_INT1_IRQHandler(void)
 {
     if (init) //If no initialized data received from the user then do nothing
@@ -659,7 +689,7 @@ void T32_INT1_IRQHandler(void)
         if (start_alarm) // if alarm called to start
         {
             pwmConfig.dutyCycle = PWM_ALARM; // set the duty cycle
-            MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig); // send the duty cycle to alarm turning it on
+            MAP_Timer_A_generatePWM(TIMER_A1_BASE, &pwmConfig); // send the duty cycle to alarm turning it on
             start_alarm = false; // reset the alarm flag
 
         }
@@ -702,7 +732,7 @@ void T32_INT1_IRQHandler(void)
                 if (start_alarm) // if Alarm flag
                 {
                     pwmConfig.dutyCycle = PWM_ALARM; // Set duty cycle
-                    MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig); // Send duty cycle to alarm turning it on
+                    MAP_Timer_A_generatePWM(TIMER_A1_BASE, &pwmConfig); // Send duty cycle to alarm turning it on
                     start_alarm = false; //reset alarm flag
                 }
 
@@ -761,7 +791,7 @@ void T32_INT1_IRQHandler(void)
                 if (start_alarm)
                 {
                     pwmConfig.dutyCycle = 31;
-                    MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig);
+                    MAP_Timer_A_generatePWM(TIMER_A1_BASE, &pwmConfig);
                     start_alarm = false;
                 }
 
@@ -820,7 +850,19 @@ void T32_INT1_IRQHandler(void)
     }
 }
 
-/* Timer32 Logging ISR Outputting to UART*/
+/*******************************************************************************
+ * Interrupt handler for Logging data. Triggered by Timer 32 at 100 Hz.
+ * Depending on the state decided in the sampling data export the data over
+ * UART in a certain order.  The general format is as follows:
+ * 1) Volume 1
+ * 2) Volume 2
+ * 3) Filtered Pressure 1
+ * 4) Filtered Pressure 2
+ * 5) Alarm Cause
+ * 6) Static Pressure
+ *
+ * last edited: 5/12/2021
+ *******************************************************************************/
 void T32_INT2_IRQHandler(void)
 {
     MAP_Timer32_clearInterruptFlag(TIMER32_1_BASE); //clear interrupt flag
@@ -847,16 +889,6 @@ void T32_INT2_IRQHandler(void)
         printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", analog_press);
         printfuart(EUSCI_A0_BASE, "%s,", s);
-//        vspfunc("%f", no_flow_counter);
-//        printfuart(EUSCI_A0_BASE, "%s,", s);
-//        vspfunc("%f", p_currentIn_f);
-//        printfuart(EUSCI_A0_BASE, "%s,", s);
-//        vspfunc("%f", -1*p_currentEx_f);
-//        printfuart(EUSCI_A0_BASE, "%s,", s);
-//        vspfunc("%f", (volFlowrateInhale));
-//        printfuart(EUSCI_A0_BASE, "%s,", s);
-//        vspfunc("%f", (-1 * volFlowrateExhale));
-//        printfuart(EUSCI_A0_BASE, "%s,", s);
 
         exportInhaleFlowFlag = false; // reset the flag
     }
@@ -877,16 +909,6 @@ void T32_INT2_IRQHandler(void)
         printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", analog_press);
         printfuart(EUSCI_A0_BASE, "%s,", s);
-//        vspfunc("%f", no_flow_counter);
-//        printfuart(EUSCI_A0_BASE, "%s,", s);
-//        vspfunc("%f", p_currentIn_f);
-//        printfuart(EUSCI_A0_BASE, "%s,", s);
-//        vspfunc("%f", -1*p_currentEx_f);
-//        printfuart(EUSCI_A0_BASE, "%s,", s);
-//        vspfunc("%f", (volFlowrateInhale));
-//        printfuart(EUSCI_A0_BASE, "%s,", s);
-//        vspfunc("%f", (-1 * volFlowrateExhale));
-//        printfuart(EUSCI_A0_BASE, "%s,", s);
 
         exportExhaleFlowFlag = false; // reset flag
     }
@@ -898,26 +920,24 @@ void T32_INT2_IRQHandler(void)
         printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", exportVolumeExhale);
         printfuart(EUSCI_A0_BASE, "%s\n", s);
-//        vspfunc("%f", no_flow_counter);
-//        printfuart(EUSCI_A0_BASE, "%s,", s);
         exportVolumeFlag = false;
     }
     else // If no flags print this useful for debugging
     {
-        //vspfunc("%f", analog_press);
-        //printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", exportVolumeInhale);
         printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", exportVolumeExhale);
         printfuart(EUSCI_A0_BASE, "%s\n", s);
-//        vspfunc("%f", no_flow_counter);
-//        printfuart(EUSCI_A0_BASE, "%s,", s);
-
     }
     MAP_GPIO_setOutputLowOnPin(GPIO_PORT_P3, GPIO_PIN2); //debugging pin
 }
 
-/* Helper Function to convert float to string */
+/*******************************************************************************
+ * Helper function for logging data that changes float data types to character
+ * arrays (Strings).
+ *
+ * last edited: 5/12/2021
+ *******************************************************************************/
 int vspfunc(char *format, ...)
 {
     va_list aptr;
@@ -928,15 +948,4 @@ int vspfunc(char *format, ...)
     va_end(aptr);
 
     return (ret);
-}
-
-/* Helper function to send string over UART */
-void UARTSendString(char pui8Buffer[])
-{
-    /* Loop while there are more characters to send. */
-    uint8_t i;
-    for (i = 0; i < strlen(pui8Buffer); i++)
-    {
-        UART_transmitData(EUSCI_A0_BASE, pui8Buffer[i]);
-    }
 }
