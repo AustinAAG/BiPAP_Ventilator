@@ -139,7 +139,7 @@ float volFlowrateExhale = 0;
 float volumeInhale = 0;
 float volumeExhale = 0;
 
-/* Constants for the Calcualtions */
+/* Constants for the Calculations */
 float frequency = SAMPLE_RATE;
 float N_N2_in = 0.80;
 float N_CO2_in = 0;
@@ -267,7 +267,7 @@ int main(void)
     /* Configuring GPIO2.4 as peripheral output for PWM */
     MAP_GPIO_setAsPeripheralModuleFunctionOutputPin(
     GPIO_PORT_P2,
-                                                    GPIO_PIN5,//4
+                                                    GPIO_PIN4,
             GPIO_PRIMARY_MODULE_FUNCTION);
 
     /* start PWM signal */
