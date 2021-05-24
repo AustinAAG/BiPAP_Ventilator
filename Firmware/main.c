@@ -84,6 +84,7 @@ float A[2] = { -1.911197067426073, 0.914975834801433 };
 float B[3] = { 9.446918438401619e-04, 0.001889383687680, 9.446918438401619e-04 };
 
 /* flags */
+bool alarm = false;
 bool init = true;
 bool start_alarm = false;
 static bool exportExhaleFlowFlag = false;
@@ -205,7 +206,7 @@ TIMER_A_CLOCKSOURCE_ACLK,                       //clockSource
         62,                                     //timerPeriod
         TIMER_A_CAPTURECOMPARE_REGISTER_1,      //compareRegister
         TIMER_A_OUTPUTMODE_RESET_SET,           //compareOutputMode
-        0                                       //dutyCycle , 31 for 50%
+        31                                       //dutyCycle , 31 for 50%
         };
 
 /*
@@ -265,13 +266,18 @@ int main(void)
     ///////////////////////////PWM for buzzer///////////////////
 
     /* Configuring GPIO2.4 as peripheral output for PWM */
-    MAP_GPIO_setAsPeripheralModuleFunctionOutputPin(
-    GPIO_PORT_P2,
-                                                    GPIO_PIN4,
-            GPIO_PRIMARY_MODULE_FUNCTION);
+    /*
+     MAP_GPIO_setAsPeripheralModuleFunctionOutputPin(
+     GPIO_PORT_P2,
+     GPIO_PIN4,
+     GPIO_PRIMARY_MODULE_FUNCTION);
+     */
 
     /* start PWM signal */
-    MAP_Timer_A_generatePWM(TIMER_A1_BASE, &pwmConfig);
+    //MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig);
+    MAP_GPIO_setAsOutputPin(GPIO_PORT_P2, GPIO_PIN4);
+    MAP_GPIO_setOutputLowOnPin(GPIO_PORT_P2, GPIO_PIN4);
+    alarm = false;
 
     ///////////////////////////UART Configuration/////////////////////////////
     /* Selecting P1.2 and P1.3 in UART mode */
@@ -562,21 +568,33 @@ void EUSCIA0_IRQHandler(void)
 
         if (MAP_UART_receiveData(EUSCI_A0_BASE) == 'R') // If the message received is the character 'R'
         {
-            if (pwmConfig.dutyCycle != 0) // If the alarm is not off
+            //if (pwmConfig.dutyCycle != 0) // If the alarm is not off
+            if (alarm)
             {
-                pwmConfig.dutyCycle = 0; // Set the duty cycle to 0
-                MAP_Timer_A_generatePWM(TIMER_A1_BASE, &pwmConfig); // Send 0 duty cycle to alarm turning it off
-                no_flow_counter = 0; // reset no flow counter
-                alarm_cause = -1; // reset alarm cause
+                MAP_GPIO_setAsOutputPin(GPIO_PORT_P2, GPIO_PIN4);
+                MAP_GPIO_setOutputLowOnPin(GPIO_PORT_P2, GPIO_PIN4);
+                alarm = false;
+                /*
+                 pwmConfig.dutyCycle = 0; // Set the duty cycle to 0
+                 MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig); // Send 0 duty cycle to alarm turning it off
+                 no_flow_counter = 0; // reset no flow counter
+                 alarm_cause = -1; // reset alarm cause
+                 */
 
             }
             else // If the alarm is off
             {
+                MAP_GPIO_setAsPeripheralModuleFunctionOutputPin(
+                        GPIO_PORT_P2,
+                        GPIO_PIN4,
+                        GPIO_PRIMARY_MODULE_FUNCTION);
                 pwmConfig.dutyCycle = PWM_ALARM; // Set the duty cycle to 31
-                MAP_Timer_A_generatePWM(TIMER_A1_BASE, &pwmConfig); // Send the duty cycle to alarm turning it on
+                MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig); // Send the duty cycle to alarm turning it on
+                alarm = true;
             }
         }
-        else if (MAP_UART_receiveData(EUSCI_A0_BASE) == 'X') { //If the message received is the character 'X'
+        else if (MAP_UART_receiveData(EUSCI_A0_BASE) == 'X')
+        { //If the message received is the character 'X'
             init = true; //stop the system
         }
         else // If the message is anything other than just 'R' or 'X'
@@ -688,10 +706,14 @@ void T32_INT1_IRQHandler(void)
 
         if (start_alarm) // if alarm called to start
         {
+            MAP_GPIO_setAsPeripheralModuleFunctionOutputPin(
+                    GPIO_PORT_P2,
+                    GPIO_PIN4,
+                    GPIO_PRIMARY_MODULE_FUNCTION);
             pwmConfig.dutyCycle = PWM_ALARM; // set the duty cycle
-            MAP_Timer_A_generatePWM(TIMER_A1_BASE, &pwmConfig); // send the duty cycle to alarm turning it on
+            MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig); // send the duty cycle to alarm turning it on
             start_alarm = false; // reset the alarm flag
-
+            alarm = true;
         }
 
         /* calculate and export flowrate data */
@@ -731,9 +753,14 @@ void T32_INT1_IRQHandler(void)
                 }
                 if (start_alarm) // if Alarm flag
                 {
+                    MAP_GPIO_setAsPeripheralModuleFunctionOutputPin(
+                            GPIO_PORT_P2,
+                            GPIO_PIN4,
+                            GPIO_PRIMARY_MODULE_FUNCTION);
                     pwmConfig.dutyCycle = PWM_ALARM; // Set duty cycle
-                    MAP_Timer_A_generatePWM(TIMER_A1_BASE, &pwmConfig); // Send duty cycle to alarm turning it on
+                    MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig); // Send duty cycle to alarm turning it on
                     start_alarm = false; //reset alarm flag
+                    alarm = true;
                 }
 
                 /* set past values */
@@ -790,9 +817,14 @@ void T32_INT1_IRQHandler(void)
 
                 if (start_alarm)
                 {
+                    MAP_GPIO_setAsPeripheralModuleFunctionOutputPin(
+                            GPIO_PORT_P2,
+                            GPIO_PIN4,
+                            GPIO_PRIMARY_MODULE_FUNCTION);
                     pwmConfig.dutyCycle = 31;
-                    MAP_Timer_A_generatePWM(TIMER_A1_BASE, &pwmConfig);
+                    MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig);
                     start_alarm = false;
+                    alarm = true;
                 }
 
                 /* Set past values */
