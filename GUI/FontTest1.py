@@ -127,7 +127,10 @@ class RespiratorDisplay(QWidget):
         bottomLayout = QGridLayout()
         reset = QPushButton("Reset Alarm")
         reset.pressed.connect(partial(self.sendData,"R"))
+        stop = QPushButton("Stop")
+        stop.pressed.connect(partial(self.sendData,"X"))
         bottomLayout.addWidget(reset, 1, 1)
+        bottomLayout.addWidget(stop, 1, 2)
         bottomGroup.setLayout(bottomLayout)
 
         #show flowrate values
@@ -393,7 +396,7 @@ class RespiratorDisplay(QWidget):
                     1: str(self.param02.value()) + ",",
                     2: str(self.paramO2Exhale.value()) + ",",
                     3: str(self.paramCO2Exhale.value()) + ",",
-                    4: str(self.paramN2exhale.value()) + ",",
+                    4: str(self.paramN2Exhale.value()) + ",",
                     5: str(self.paramH20.value()) + ",",
                     6: str(self.paramLow.value()) + ",",
                     7: str(self.paramHigh.value()) + ",",
