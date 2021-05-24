@@ -213,6 +213,8 @@ TIMER_A_CLOCKSOURCE_ACLK,                       //clockSource
  * Main Function runs on flash.  Initializes all the modules used for this code.  Sets up clock speeds.
  * Configure Pins and Interrupts that will be in use.  Finally enter an infinite loop looking for
  * interrupts.
+ * 
+ * last edited: 5/18/2021
  */
 int main(void)
 {
@@ -554,7 +556,7 @@ void ADC14_IRQHandler(void)
  * data and wait
  * 3) Init data is received.  Save all constants then begin measuring new data
  *
- * last edited: 5/12/2021
+ * last edited: 5/18/2021
  *******************************************************************************/
 void EUSCIA0_IRQHandler(void)
 {
@@ -627,7 +629,7 @@ void EUSCIA0_IRQHandler(void)
  * filtered pressure data, volume, and state of breathing (i.e. Inhale or Exhale)
  * If any of the values are outside limits trigger the alarm.
  *
- * last edited: 5/12/2021
+ * last edited: 5/18/2021
  *******************************************************************************/
 void T32_INT1_IRQHandler(void)
 {
