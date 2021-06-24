@@ -41,7 +41,7 @@ init = False
 #create file and set headings
 with open(os.path.join(path, filename), 'w', newline='') as file:
     writer = csv.writer(file)
-    writer.writerow(["Flow rate", "Inhale", "Exhale", "blank", "Timestamp"])
+    writer.writerow(["Volume Flow Rate","Filtered Pressure Inhale","Filtered Pressure Exhale","Static Pressure","Volume Inhale","Volume Exhale","Alarm Code", "Timestamp"])
 
 #print available com ports
 comPorts = list(serial.tools.list_ports.comports())
@@ -129,8 +129,11 @@ class RespiratorDisplay(QWidget):
         reset.pressed.connect(partial(self.sendData,"R"))
         stop = QPushButton("Stop")
         stop.pressed.connect(partial(self.sendData,"X"))
+        start = QPushButton("Start")
+        start.pressed.connect(partial(self.sendData,"S"))
         bottomLayout.addWidget(reset, 1, 1)
-        bottomLayout.addWidget(stop, 1, 2)
+        bottomLayout.addWidget(start, 1, 2)
+        bottomLayout.addWidget(stop, 1, 3)
         bottomGroup.setLayout(bottomLayout)
 
         #show flowrate values
@@ -284,7 +287,7 @@ class RespiratorDisplay(QWidget):
 
         layout4 = QGridLayout()
 
-        OptionInit = QPushButton("Initialize")
+        OptionInit = QPushButton("Calibrate")
         OptionInit.pressed.connect(self.init)
 
         layout4.addWidget(OptionInit, 9, 0, 1, 3)
@@ -337,7 +340,7 @@ class RespiratorDisplay(QWidget):
             #dataList = [flowrate in, pressure in, pressure ex, alarm cause, flowrate in, flowrate ex, vol in, vol out]
              
         try:
-            number = float(dataList[0])*60
+            number = float(dataList[1])*60
             self.rawdata = self.rawdata[1:] + [number]
 
             #update flowrate textbox
@@ -345,18 +348,21 @@ class RespiratorDisplay(QWidget):
             self.volumeOutBox.setText("Tidal Volume Exhale (ml): " + dataList[7])
             self.staticPressBox.setText("Static Pressure (psi): " + dataList[5])
 
-            if (float(dataList[4])==1):
+            if (float(dataList[0])==1):
                 self.AlarmCodeBox.setText("Alarm Cause: Percent Difference")
-            if (float(dataList[4])==2):
+            if (float(dataList[0])==2):
                 self.AlarmCodeBox.setText("Alarm Cause: Low Flow")
-            if (float(dataList[4])==3):
+            if (float(dataList[0])==3):
                 self.AlarmCodeBox.setText("Alarm Cause: High Flow")
-            if (float(dataList[4])==999):
+            if (float(dataList[0])==100):
+                self.AlarmCodeBox.setText("Callibrating System: Make sure no Flow")
+            if (float(dataList[0])==101):
+                self.AlamrCodeBox.setText("Finished Calibration: Press 'Start' when ready")
+            if (float(dataList[0])==999):
                 self.AlarmCodeBox.setText("Alarm Cause: No Flow")
-            if (float(dataList[4])==-1):
+            if (float(dataList[0])==-1):
                 self.AlarmCodeBox.setText("Alarm Cause: ---")
 
-            #set_AlarmCode(dataList[3])
             # Drop off the first y element, append a new one.
             self.ydata = self.rawdata
 
@@ -383,7 +389,7 @@ class RespiratorDisplay(QWidget):
             with open(os.path.join(path, filename), 'a', newline='') as file:
                 writer = csv.writer(file)
                 now = datetime.now()
-                writer.writerow([number, float(dataList[1]), float(dataList[2]), float(dataList[3]), now.strftime("%H:%M:%S")])
+                writer.writerow([number, float(dataList[2]), float(dataList[3]), float(dataList[5]), float(dataList[6]), float(dataList[7]), float(dataList[0]), now.strftime("%H:%M:%S")])
                 
         except:
             ser.flushInput()
@@ -405,9 +411,7 @@ class RespiratorDisplay(QWidget):
         self.sendOut = switch.get(par2set)
         if par2set == 0:
             scale = int(self.paramScale.value())
-        #else:com
-        
-            #self.sendData(self.sendOut)
+
 
     #send data to serial port
     def sendData(self, msg):

@@ -58,6 +58,8 @@ void printfuart(uint32_t moduleInstance, char *format, ...);
 /* PWM for Alarm */
 #define PWM_ALARM           31
 
+/* Calibration time in seconds*/
+#define CALIBRATION_TIME    10
 /* Offset for noisy data */
 float offset = 6;
 
@@ -85,7 +87,9 @@ float B[3] = { 9.446918438401619e-04, 0.001889383687680, 9.446918438401619e-04 }
 
 /* flags */
 bool alarm = false;
-bool init = true;
+bool init = false;
+bool calib = false;
+bool ready = false;
 bool start_alarm = false;
 static bool exportExhaleFlowFlag = false;
 static bool exportInhaleFlowFlag = false;
@@ -95,6 +99,8 @@ bool inhale_flag_past = false;
 bool exhale_flag = false;
 bool exhale_flag_past = false;
 float alarm_cause = -1;
+float calib_counter = 0;
+float calib_limit = CALIBRATION_TIME * SAMPLE_RATE;
 
 /* Initalize variables */
 static int16_t p_currentIn = 0, p_currentEx = 0;
@@ -114,12 +120,18 @@ static float totalVolumeInhale = 0;
 static float totalVolumeExhale = 0;
 static float volFlowrateInhalePast = 0;
 static float volFlowrateExhalePast = 0;
-static float exportVolumeExhale = 1;
-static float exportVolumeInhale = 2;
+static float exportVolumeExhale = 0;
+static float exportVolumeInhale = 0;
 volatile uint16_t adcResult;
-float analog_press = 18;
+float analog_press = 0;
 float no_flow_counter = 0;
 float no_flow_limit = 10000;
+float trans1_offset = 0;
+float trans2_offset = 0;
+float analog_offset = 0;
+float trans1_sum = 0;
+float trans2_sum = 0;
+float analog_sum = 0;
 
 /* Initalize variables for UART Transmission*/
 char init_const[50];
@@ -213,7 +225,7 @@ TIMER_A_CLOCKSOURCE_ACLK,                       //clockSource
  * Main Function runs on flash.  Initializes all the modules used for this code.  Sets up clock speeds.
  * Configure Pins and Interrupts that will be in use.  Finally enter an infinite loop looking for
  * interrupts.
- * 
+ *
  * last edited: 5/18/2021
  */
 int main(void)
@@ -455,11 +467,9 @@ void EUSCIB0_IRQHandler(void)
     float pressure_max = 2490.89; //2500; // in Pascals
     float pressure_min = -2490.89; //-2500; // in Pascals
     /* calculate pressure read in with bias offset */
-    p_currentIn_ =
-            -6 // <-- Change this value to home the zero when no flow
-                    + ((((float) (p_currentIn) - output_min)
-                            * (pressure_max - pressure_min))
-                            / (output_max - output_min)) + pressure_min;
+    p_currentIn_ = ((((float) (p_currentIn) - output_min)
+            * (pressure_max - pressure_min)) / (output_max - output_min))
+            + pressure_min;
 
 }
 
@@ -520,11 +530,9 @@ void EUSCIB1_IRQHandler(void)
     float pressure_min = -2490.89; // in Pascals
 
     /* calculate with bias offset */
-    p_currentEx_ =
-            -6 // <-- Change this value to home the zero when no flow
-                    + ((((float) (p_currentEx) - output_min)
-                            * (pressure_max - pressure_min))
-                            / (output_max - output_min)) + pressure_min;
+    p_currentEx_ = ((((float) (p_currentEx) - output_min)
+            * (pressure_max - pressure_min)) / (output_max - output_min))
+            + pressure_min;
 
 }
 
@@ -544,7 +552,7 @@ void ADC14_IRQHandler(void)
     if (status & ADC_INT0) //If interrupt is from ADC0
     {
         adcResult = MAP_ADC14_getResult(ADC_MEM0); // Read Result from ADC0
-        analog_press = adc_to_pressure(adcResult); // Calculate the pressure of that ADC conversion
+        analog_press = adc_to_pressure(adcResult) + analog_offset; // Calculate the pressure of that ADC conversion
     }
 }
 
@@ -597,7 +605,12 @@ void EUSCIA0_IRQHandler(void)
         }
         else if (MAP_UART_receiveData(EUSCI_A0_BASE) == 'X')
         { //If the message received is the character 'X'
-            init = true; //stop the system
+            init = false; //stop the system
+            alarm_cause = -1; //stop the alarm from triggering
+        }
+        else if (MAP_UART_receiveData(EUSCI_A0_BASE) == 'S')
+        {  //If the message received is the character 'S'
+            init = true; //start the system
         }
         else // If the message is anything other than just 'R' or 'X'
         {
@@ -615,7 +628,15 @@ void EUSCIA0_IRQHandler(void)
                 init_LowVolume = atof(strtok(NULL, ",")); // retrieve Low FLow
                 init_HighVolume = atof(strtok(NULL, ",")); // retrieve High FLow
                 init_PercentDiff = atof(strtok(NULL, "$")); // retrieve Percent difference
-                init = false; // begin sampling data
+                calib = true; // begin calibration
+                ready = false;
+                trans1_offset = 0;
+                trans2_offset = 0;
+                analog_offset = 0;
+                trans1_sum = 0;
+                trans2_sum = 0;
+                analog_sum = 0;
+                calib_counter = 0;
                 init_counter = 0; // count how many times this has been called for debugging
             }
         }
@@ -629,16 +650,86 @@ void EUSCIA0_IRQHandler(void)
  * filtered pressure data, volume, and state of breathing (i.e. Inhale or Exhale)
  * If any of the values are outside limits trigger the alarm.
  *
- * last edited: 5/18/2021
+ * last edited: 6/23/2021
  *******************************************************************************/
 void T32_INT1_IRQHandler(void)
 {
-    if (init) //If no initialized data received from the user then do nothing
+    if (calib && !ready) //If calibration flag triggered
     {
-        //wait for UART receive interrupt to send you startup info (%CO2, O2...)
-        // when it does, init = false (set this in interrupt handler)
+        /* Making sure the last transaction has been completely sent out */
+        MAP_Timer32_clearInterruptFlag(TIMER32_0_BASE);
+
+        if (calib_counter == calib_limit)
+        {
+            ready = true;
+            alarm_cause = 101;
+
+            trans1_offset = (trans1_sum / calib_limit) * -1;
+            trans2_offset = (trans2_sum / calib_limit) * -1;
+            analog_offset = (analog_sum / calib_limit) * -1;
+        }
+        else
+        {
+
+            // inhale conditions
+            N_N2_in = init_N2; //0.79;
+            N_CO2_in = init_CO2; //0.0;
+            N_O2_in = init_O2; //0.21;
+            N_H2O_in = init_H2O; //0.0;
+            T_air_in = init_T_air_ex; // Air temperature during inhale [K]
+
+            // exhale conditions
+            N_N2_ex = init_N2; //0.79;
+            N_CO2_ex = init_CO2; //0;
+            N_O2_ex = init_O2; //0.21;
+            N_H2O_ex = init_H2O; //0;
+            T_air_ex = init_T_air_ex; // Air temperature during exhale [K]
+
+            // filter data with fc = 10Hz, 2 pole Low pass filter
+            p_currentIn_f = filter(A, B, p_currentIn_, p_pastIn, p_pastpastIn,
+                                   p_pastIn_f, p_pastpastIn_f);
+
+            p_currentEx_f = filter(A, B, p_currentEx_, p_pastEx, p_pastpastEx,
+                                   p_pastEx_f, p_pastpastEx_f);
+
+            trans1_sum += p_currentIn_f;
+            trans2_sum += p_currentIn_f;
+            analog_sum += analog_press;
+
+            /* Set all current values to past values */
+            p_pastpastEx = p_pastEx;
+            p_pastpastIn = p_pastIn;
+            p_pastpastEx_f = p_pastEx_f;
+            p_pastpastIn_f = p_pastIn_f;
+            p_pastEx = p_currentEx_;
+            p_pastIn = p_currentIn_;
+            p_pastEx_f = p_currentEx_f;
+            p_pastIn_f = p_currentIn_f;
+
+            /* Re-initialize the reading index */
+            xferIndex0 = 0;
+            xferIndex1 = 0;
+
+            /* Wait for stop signals to be sent to both transducers */
+            while (MAP_I2C_masterIsStopSent(EUSCI_B0_BASE)
+                    && MAP_I2C_masterIsStopSent(EUSCI_B1_BASE))
+                ;
+
+            /* send start receive from transducer 1 */
+            MAP_I2C_masterReceiveStart(EUSCI_B1_BASE);
+            MAP_I2C_enableInterrupt(EUSCI_B1_BASE,
+            EUSCI_B_I2C_RECEIVE_INTERRUPT0);
+
+            /* send start receive from transducer 2 */
+            MAP_I2C_masterReceiveStart(EUSCI_B0_BASE);
+            MAP_I2C_enableInterrupt(EUSCI_B0_BASE,
+            EUSCI_B_I2C_RECEIVE_INTERRUPT0);
+
+            alarm_cause = 100;
+            calib_counter++;
+        }
     }
-    else
+    else if (init && ready) //if calibration completed & start signal sent
     {
         /* Making sure the last transaction has been completely sent out */
         MAP_Timer32_clearInterruptFlag(TIMER32_0_BASE);
@@ -647,27 +738,12 @@ void T32_INT1_IRQHandler(void)
         MAP_GPIO_setOutputHighOnPin(GPIO_PORT_P3, GPIO_PIN3);
         j++;
 
-        // inhale conditions
-        N_N2_in = init_N2; //0.79;
-        N_CO2_in = init_CO2; //0.0;
-        N_O2_in = init_O2; //0.21;
-        N_H2O_in = init_H2O; //0.0;
-        T_air_in = init_T_air_ex; // Air temperature during inhale [K]
-
-        // exhale conditions
-        N_N2_ex = init_N2; //0.79;
-        N_CO2_ex = init_CO2; //0;
-        N_O2_ex = init_O2; //0.21;
-        N_H2O_ex = init_H2O; //0;
-        T_air_ex = init_T_air_ex; // Air temperature during exhale [K]
-
         // filter data with fc = 10Hz, 2 pole Low pass filter
-        p_currentIn_f = filter(A, B, p_currentIn_, p_pastIn, p_pastpastIn,
-                               p_pastIn_f, p_pastpastIn_f);
+        p_currentIn_f = (filter(A, B, p_currentIn_, p_pastIn, p_pastpastIn,
+                                p_pastIn_f, p_pastpastIn_f)) + trans1_offset;
 
-        p_currentEx_f = filter(A, B, p_currentEx_, p_pastEx, p_pastpastEx,
-                               p_pastEx_f, p_pastpastEx_f);
-
+        p_currentEx_f = (filter(A, B, p_currentEx_, p_pastEx, p_pastpastEx,
+                                p_pastEx_f, p_pastpastEx_f)) + trans2_offset;
         /* Decide what state the breathing cycle is in */
         if (((p_currentIn_f + offset) > p_currentEx_f)
                 && ((p_currentIn_f) < (p_currentEx_f + offset)))
@@ -895,7 +971,7 @@ void T32_INT1_IRQHandler(void)
  * 5) Alarm Cause
  * 6) Static Pressure
  *
- * last edited: 5/12/2021
+ * last edited: 6/23/2021
  *******************************************************************************/
 void T32_INT2_IRQHandler(void)
 {
@@ -911,6 +987,9 @@ void T32_INT2_IRQHandler(void)
         /*
          * Converting float to string & Printing string to PC through UART - USB
          */
+
+        vspfunc("%f", alarm_cause);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", (volFlowrateInhale));
         printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", (volFlowrateExhale));
@@ -918,8 +997,6 @@ void T32_INT2_IRQHandler(void)
         vspfunc("%f", p_currentIn_f);
         printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", -1 * p_currentEx_f);
-        printfuart(EUSCI_A0_BASE, "%s,", s);
-        vspfunc("%f", alarm_cause);
         printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", analog_press);
         printfuart(EUSCI_A0_BASE, "%s,", s);
@@ -931,6 +1008,8 @@ void T32_INT2_IRQHandler(void)
         /*
          * Converting float to string & Printing string to PC through UART - USB
          */
+        vspfunc("%f", alarm_cause);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", (-1 * volFlowrateExhale));
         printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", (volFlowrateInhale));
@@ -938,8 +1017,6 @@ void T32_INT2_IRQHandler(void)
         vspfunc("%f", p_currentIn_f);
         printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", -1 * p_currentEx_f);
-        printfuart(EUSCI_A0_BASE, "%s,", s);
-        vspfunc("%f", alarm_cause);
         printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", analog_press);
         printfuart(EUSCI_A0_BASE, "%s,", s);
@@ -958,9 +1035,7 @@ void T32_INT2_IRQHandler(void)
     }
     else // If no flags print this useful for debugging
     {
-        vspfunc("%f", exportVolumeInhale);
-        printfuart(EUSCI_A0_BASE, "%s,", s);
-        vspfunc("%f", exportVolumeExhale);
+        vspfunc("%f", alarm_cause);
         printfuart(EUSCI_A0_BASE, "%s\n", s);
     }
     MAP_GPIO_setOutputLowOnPin(GPIO_PORT_P3, GPIO_PIN2); //debugging pin
