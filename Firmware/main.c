@@ -612,7 +612,7 @@ void EUSCIA0_IRQHandler(void)
         {  //If the message received is the character 'S'
             init = true; //start the system
         }
-        else // If the message is anything other than just 'R' or 'X'
+        else // If the message is anything other than just 'R', 'X', or 'S'
         {
             init_const[init_counter] = MAP_UART_receiveData(EUSCI_A0_BASE); // Store data read in into the array
             init_counter++; // increment array counter
@@ -629,7 +629,6 @@ void EUSCIA0_IRQHandler(void)
                 init_HighVolume = atof(strtok(NULL, ",")); // retrieve High FLow
                 init_PercentDiff = atof(strtok(NULL, "$")); // retrieve Percent difference
                 calib = true; // begin calibration
-                ready = false;
                 trans1_offset = 0;
                 trans2_offset = 0;
                 analog_offset = 0;
@@ -638,6 +637,20 @@ void EUSCIA0_IRQHandler(void)
                 analog_sum = 0;
                 calib_counter = 0;
                 init_counter = 0; // count how many times this has been called for debugging
+
+                // inhale conditions
+                N_N2_in = init_N2; //0.79;
+                N_CO2_in = init_CO2; //0.0;
+                N_O2_in = init_O2; //0.21;
+                N_H2O_in = init_H2O; //0.0;
+                T_air_in = init_T_air_ex; // Air temperature during inhale [K]
+
+                // exhale conditions
+                N_N2_ex = init_N2; //0.79;
+                N_CO2_ex = init_CO2; //0;
+                N_O2_ex = init_O2; //0.21;
+                N_H2O_ex = init_H2O; //0;
+                T_air_ex = init_T_air_ex; // Air temperature during exhale [K]
             }
         }
     }
@@ -654,37 +667,22 @@ void EUSCIA0_IRQHandler(void)
  *******************************************************************************/
 void T32_INT1_IRQHandler(void)
 {
-    if (calib && !ready) //If calibration flag triggered
+    if (calib)
     {
         /* Making sure the last transaction has been completely sent out */
         MAP_Timer32_clearInterruptFlag(TIMER32_0_BASE);
 
         if (calib_counter == calib_limit)
         {
-            ready = true;
             alarm_cause = 101;
 
             trans1_offset = (trans1_sum / calib_limit) * -1;
             trans2_offset = (trans2_sum / calib_limit) * -1;
             analog_offset = (analog_sum / calib_limit) * -1;
+            calib = false;
         }
         else
         {
-
-            // inhale conditions
-            N_N2_in = init_N2; //0.79;
-            N_CO2_in = init_CO2; //0.0;
-            N_O2_in = init_O2; //0.21;
-            N_H2O_in = init_H2O; //0.0;
-            T_air_in = init_T_air_ex; // Air temperature during inhale [K]
-
-            // exhale conditions
-            N_N2_ex = init_N2; //0.79;
-            N_CO2_ex = init_CO2; //0;
-            N_O2_ex = init_O2; //0.21;
-            N_H2O_ex = init_H2O; //0;
-            T_air_ex = init_T_air_ex; // Air temperature during exhale [K]
-
             // filter data with fc = 10Hz, 2 pole Low pass filter
             p_currentIn_f = filter(A, B, p_currentIn_, p_pastIn, p_pastpastIn,
                                    p_pastIn_f, p_pastpastIn_f);
@@ -696,7 +694,7 @@ void T32_INT1_IRQHandler(void)
             trans2_sum += p_currentIn_f;
             analog_sum += analog_press;
 
-            /* Set all current values to past values */
+            // Set all current values to past values
             p_pastpastEx = p_pastEx;
             p_pastpastIn = p_pastIn;
             p_pastpastEx_f = p_pastEx_f;
@@ -706,21 +704,21 @@ void T32_INT1_IRQHandler(void)
             p_pastEx_f = p_currentEx_f;
             p_pastIn_f = p_currentIn_f;
 
-            /* Re-initialize the reading index */
+            //Re-initialize the reading index
             xferIndex0 = 0;
             xferIndex1 = 0;
 
-            /* Wait for stop signals to be sent to both transducers */
+            //Wait for stop signals to be sent to both transducers
             while (MAP_I2C_masterIsStopSent(EUSCI_B0_BASE)
                     && MAP_I2C_masterIsStopSent(EUSCI_B1_BASE))
                 ;
 
-            /* send start receive from transducer 1 */
+            //send start receive from transducer 1
             MAP_I2C_masterReceiveStart(EUSCI_B1_BASE);
             MAP_I2C_enableInterrupt(EUSCI_B1_BASE,
             EUSCI_B_I2C_RECEIVE_INTERRUPT0);
 
-            /* send start receive from transducer 2 */
+            //send start receive from transducer 2
             MAP_I2C_masterReceiveStart(EUSCI_B0_BASE);
             MAP_I2C_enableInterrupt(EUSCI_B0_BASE,
             EUSCI_B_I2C_RECEIVE_INTERRUPT0);
@@ -728,22 +726,22 @@ void T32_INT1_IRQHandler(void)
             alarm_cause = 100;
             calib_counter++;
         }
+
     }
-    else if (init && ready) //if calibration completed & start signal sent
+    else if (init)
     {
         /* Making sure the last transaction has been completely sent out */
         MAP_Timer32_clearInterruptFlag(TIMER32_0_BASE);
 
-        /* debugging tools */
-        MAP_GPIO_setOutputHighOnPin(GPIO_PORT_P3, GPIO_PIN3);
-        j++;
-
         // filter data with fc = 10Hz, 2 pole Low pass filter
-        p_currentIn_f = (filter(A, B, p_currentIn_, p_pastIn, p_pastpastIn,
-                                p_pastIn_f, p_pastpastIn_f)) + trans1_offset;
+        p_currentIn_f = filter(A, B, p_currentIn_, p_pastIn, p_pastpastIn,
+                               p_pastIn_f, p_pastpastIn_f);
+        p_currentIn_f += trans1_offset;
 
-        p_currentEx_f = (filter(A, B, p_currentEx_, p_pastEx, p_pastpastEx,
-                                p_pastEx_f, p_pastpastEx_f)) + trans2_offset;
+        p_currentEx_f = filter(A, B, p_currentEx_, p_pastEx, p_pastpastEx,
+                               p_pastEx_f, p_pastpastEx_f);
+        p_currentEx_f += trans2_offset;
+
         /* Decide what state the breathing cycle is in */
         if (((p_currentIn_f + offset) > p_currentEx_f)
                 && ((p_currentIn_f) < (p_currentEx_f + offset)))
@@ -957,6 +955,7 @@ void T32_INT1_IRQHandler(void)
 
         // turn off timing pin used for debugging
         MAP_GPIO_setOutputLowOnPin(GPIO_PORT_P3, GPIO_PIN3);
+
     }
 }
 
@@ -1000,6 +999,10 @@ void T32_INT2_IRQHandler(void)
         printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", analog_press);
         printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", exportVolumeInhale);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", exportVolumeExhale);
+        printfuart(EUSCI_A0_BASE, "%s\n", s);
 
         exportInhaleFlowFlag = false; // reset the flag
     }
@@ -1020,24 +1023,32 @@ void T32_INT2_IRQHandler(void)
         printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", analog_press);
         printfuart(EUSCI_A0_BASE, "%s,", s);
-
-        exportExhaleFlowFlag = false; // reset flag
-    }
-
-    /* export correct volume */
-    if (exportVolumeFlag)
-    {
         vspfunc("%f", exportVolumeInhale);
         printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", exportVolumeExhale);
         printfuart(EUSCI_A0_BASE, "%s\n", s);
-        exportVolumeFlag = false;
+        exportExhaleFlowFlag = false; // reset flag
     }
-    else // If no flags print this useful for debugging
+    else
     {
         vspfunc("%f", alarm_cause);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", 0);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", 0);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", 0);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", 0);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", 0);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", 0);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", 0);
         printfuart(EUSCI_A0_BASE, "%s\n", s);
     }
+
     MAP_GPIO_setOutputLowOnPin(GPIO_PORT_P3, GPIO_PIN2); //debugging pin
 }
 

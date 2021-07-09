@@ -357,7 +357,7 @@ class RespiratorDisplay(QWidget):
             if (float(dataList[0])==100):
                 self.AlarmCodeBox.setText("Callibrating System: Make sure no Flow")
             if (float(dataList[0])==101):
-                self.AlamrCodeBox.setText("Finished Calibration: Press 'Start' when ready")
+                self.AlarmCodeBox.setText("Finished Calibration: Press 'Start' when ready")
             if (float(dataList[0])==999):
                 self.AlarmCodeBox.setText("Alarm Cause: No Flow")
             if (float(dataList[0])==-1):
