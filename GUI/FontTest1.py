@@ -389,7 +389,7 @@ class RespiratorDisplay(QWidget):
             with open(os.path.join(path, filename), 'a', newline='') as file:
                 writer = csv.writer(file)
                 now = datetime.now()
-                writer.writerow([number, float(dataList[2]), float(dataList[3]), float(dataList[5]), float(dataList[6]), float(dataList[7]), float(dataList[0]), now.strftime("%H:%M:%S")])
+                writer.writerow([number, float(dataList[10]), float(dataList[11]), float(dataList[5]), float(dataList[6]), float(dataList[7]), float(dataList[0]), now.strftime("%H:%M:%S")])
                 
         except:
             ser.flushInput()

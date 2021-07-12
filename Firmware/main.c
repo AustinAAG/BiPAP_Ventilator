@@ -132,6 +132,8 @@ float analog_offset = 0;
 float trans1_sum = 0;
 float trans2_sum = 0;
 float analog_sum = 0;
+float p_calibIn = 0;
+float p_calibEx = 0;
 
 /* Initalize variables for UART Transmission*/
 char init_const[50];
@@ -417,6 +419,9 @@ int main(void)
  *******************************************************************************/
 void EUSCIB0_IRQHandler(void)
 {
+
+    MAP_GPIO_setOutputHighOnPin(GPIO_PORT_P3, GPIO_PIN2); //debugging pin
+    MAP_GPIO_setOutputLowOnPin(GPIO_PORT_P3, GPIO_PIN2); //debugging pin
     uint_fast16_t status; // Interrupt status message
 
     status = MAP_I2C_getEnabledInterruptStatus(EUSCI_B0_BASE); // Read status
@@ -490,6 +495,7 @@ void EUSCIB1_IRQHandler(void)
      * send a STOP condition */
     if (status & EUSCI_B_I2C_RECEIVE_INTERRUPT0)
     {
+
         if (xferIndex1 == NUM_OF_REC_BYTES - 2)
         {
             MAP_I2C_disableInterrupt(EUSCI_B1_BASE,
@@ -611,6 +617,7 @@ void EUSCIA0_IRQHandler(void)
         else if (MAP_UART_receiveData(EUSCI_A0_BASE) == 'S')
         {  //If the message received is the character 'S'
             init = true; //start the system
+            alarm_cause = -1;
         }
         else // If the message is anything other than just 'R', 'X', or 'S'
         {
@@ -639,18 +646,18 @@ void EUSCIA0_IRQHandler(void)
                 init_counter = 0; // count how many times this has been called for debugging
 
                 // inhale conditions
-                N_N2_in = init_N2; //0.79;
-                N_CO2_in = init_CO2; //0.0;
-                N_O2_in = init_O2; //0.21;
-                N_H2O_in = init_H2O; //0.0;
-                T_air_in = init_T_air_ex; // Air temperature during inhale [K]
+                N_N2_in = 0.79;
+                N_CO2_in = 0.0;
+                N_O2_in = 0.21;
+                N_H2O_in = 0.0;
+                T_air_in = 293; // Air temperature during inhale [K]
 
                 // exhale conditions
-                N_N2_ex = init_N2; //0.79;
-                N_CO2_ex = init_CO2; //0;
-                N_O2_ex = init_O2; //0.21;
-                N_H2O_ex = init_H2O; //0;
-                T_air_ex = init_T_air_ex; // Air temperature during exhale [K]
+                N_N2_ex = 0.79;
+                N_CO2_ex = 0;
+                N_O2_ex = 0.21;
+                N_H2O_ex = 0;
+                T_air_ex = 293; // Air temperature during exhale [K]
             }
         }
     }
@@ -691,7 +698,7 @@ void T32_INT1_IRQHandler(void)
                                    p_pastEx_f, p_pastpastEx_f);
 
             trans1_sum += p_currentIn_f;
-            trans2_sum += p_currentIn_f;
+            trans2_sum += p_currentEx_f;
             analog_sum += analog_press;
 
             // Set all current values to past values
@@ -736,27 +743,29 @@ void T32_INT1_IRQHandler(void)
         // filter data with fc = 10Hz, 2 pole Low pass filter
         p_currentIn_f = filter(A, B, p_currentIn_, p_pastIn, p_pastpastIn,
                                p_pastIn_f, p_pastpastIn_f);
-        p_currentIn_f += trans1_offset;
+        //p_currentIn_f += trans1_offset;
+        p_calibIn = p_currentIn_f + trans1_offset;
 
         p_currentEx_f = filter(A, B, p_currentEx_, p_pastEx, p_pastpastEx,
                                p_pastEx_f, p_pastpastEx_f);
-        p_currentEx_f += trans2_offset;
+        //p_currentEx_f += trans2_offset;
+        p_calibEx = p_currentEx_f + trans2_offset;
 
         /* Decide what state the breathing cycle is in */
-        if (((p_currentIn_f + offset) > p_currentEx_f)
-                && ((p_currentIn_f) < (p_currentEx_f + offset)))
+        if (((p_calibIn + offset) > p_calibEx)
+                && ((p_calibIn) < (p_calibEx + offset)))
         {
             // do what you've been doing
             inhale_flag = inhale_flag_past;
             exhale_flag = exhale_flag_past;
         }
-        else if ((p_currentIn_f + offset) > p_currentEx_f)
+        else if ((p_calibIn + offset) > p_calibEx)
         {
             // switch to inhale
             inhale_flag = true;
             exhale_flag = false;
         }
-        else if ((p_currentIn_f) < (p_currentEx_f + offset))
+        else if ((p_calibIn) < (p_calibEx + offset))
         {
             // switch to exhale
             exhale_flag = true;
@@ -780,24 +789,24 @@ void T32_INT1_IRQHandler(void)
             no_flow_counter = 0; //reset no flow counter
         }
 
-        if (start_alarm) // if alarm called to start
-        {
-            MAP_GPIO_setAsPeripheralModuleFunctionOutputPin(
-                    GPIO_PORT_P2,
-                    GPIO_PIN4,
-                    GPIO_PRIMARY_MODULE_FUNCTION);
-            pwmConfig.dutyCycle = PWM_ALARM; // set the duty cycle
-            MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig); // send the duty cycle to alarm turning it on
-            start_alarm = false; // reset the alarm flag
-            alarm = true;
-        }
+        /*if (start_alarm) // if alarm called to start
+         {
+         MAP_GPIO_setAsPeripheralModuleFunctionOutputPin(
+         GPIO_PORT_P2,
+         GPIO_PIN4,
+         GPIO_PRIMARY_MODULE_FUNCTION);
+         pwmConfig.dutyCycle = PWM_ALARM; // set the duty cycle
+         MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig); // send the duty cycle to alarm turning it on
+         start_alarm = false; // reset the alarm flag
+         alarm = true;
+         }*/
 
         /* calculate and export flowrate data */
         if (inhale_flag) //currently an inhale
         {
             /* Calculate the flowrate */
             dir_c = 3.5391; //3.6266;
-            volFlowrateInhale = getFlowRate(p_currentIn_f, N_N2_in, N_O2_in,
+            volFlowrateInhale = getFlowRate(p_calibIn, N_N2_in, N_O2_in,
                                             N_CO2_in, N_H2O_in, T_air_in, dir_c,
                                             1);
             if (exhale_flag_past) //If past state was an exhale
@@ -827,17 +836,17 @@ void T32_INT1_IRQHandler(void)
                     start_alarm = true; // Alarm set flag
                     alarm_cause = 3; // set alarm cause to high flow
                 }
-                if (start_alarm) // if Alarm flag
-                {
-                    MAP_GPIO_setAsPeripheralModuleFunctionOutputPin(
-                            GPIO_PORT_P2,
-                            GPIO_PIN4,
-                            GPIO_PRIMARY_MODULE_FUNCTION);
-                    pwmConfig.dutyCycle = PWM_ALARM; // Set duty cycle
-                    MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig); // Send duty cycle to alarm turning it on
-                    start_alarm = false; //reset alarm flag
-                    alarm = true;
-                }
+                /*if (start_alarm) // if Alarm flag
+                 {
+                 MAP_GPIO_setAsPeripheralModuleFunctionOutputPin(
+                 GPIO_PORT_P2,
+                 GPIO_PIN4,
+                 GPIO_PRIMARY_MODULE_FUNCTION);
+                 pwmConfig.dutyCycle = PWM_ALARM; // Set duty cycle
+                 MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig); // Send duty cycle to alarm turning it on
+                 start_alarm = false; //reset alarm flag
+                 alarm = true;
+                 }*/
 
                 /* set past values */
                 totalVolumeInhalePast = totalVolumeInhale;
@@ -859,7 +868,7 @@ void T32_INT1_IRQHandler(void)
         {
             /* Calculate Flow Rate */
             dir_c = 3.5416; //3.6198;
-            volFlowrateExhale = getFlowRate(p_currentEx_f, N_N2_ex, N_O2_ex,
+            volFlowrateExhale = getFlowRate(p_calibEx, N_N2_ex, N_O2_ex,
                                             N_CO2_ex, N_H2O_ex, T_air_ex, dir_c,
                                             0);
 
@@ -891,17 +900,17 @@ void T32_INT1_IRQHandler(void)
                     alarm_cause = 3;
                 }
 
-                if (start_alarm)
-                {
-                    MAP_GPIO_setAsPeripheralModuleFunctionOutputPin(
-                            GPIO_PORT_P2,
-                            GPIO_PIN4,
-                            GPIO_PRIMARY_MODULE_FUNCTION);
-                    pwmConfig.dutyCycle = 31;
-                    MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig);
-                    start_alarm = false;
-                    alarm = true;
-                }
+                /*if (start_alarm)
+                 {
+                 MAP_GPIO_setAsPeripheralModuleFunctionOutputPin(
+                 GPIO_PORT_P2,
+                 GPIO_PIN4,
+                 GPIO_PRIMARY_MODULE_FUNCTION);
+                 pwmConfig.dutyCycle = 31;
+                 MAP_Timer_A_generatePWM(TIMER_A0_BASE, &pwmConfig);
+                 start_alarm = false;
+                 alarm = true;
+                 }*/
 
                 /* Set past values */
                 totalVolumeInhalePast = totalVolumeInhale;
@@ -949,7 +958,7 @@ void T32_INT1_IRQHandler(void)
         MAP_I2C_masterReceiveStart(EUSCI_B1_BASE);
         MAP_I2C_enableInterrupt(EUSCI_B1_BASE, EUSCI_B_I2C_RECEIVE_INTERRUPT0);
 
-        /* send start receive from trasnducer 2 */
+        /* send start receive from transducer 2 */
         MAP_I2C_masterReceiveStart(EUSCI_B0_BASE);
         MAP_I2C_enableInterrupt(EUSCI_B0_BASE, EUSCI_B_I2C_RECEIVE_INTERRUPT0);
 
@@ -976,8 +985,6 @@ void T32_INT2_IRQHandler(void)
 {
     MAP_Timer32_clearInterruptFlag(TIMER32_1_BASE); //clear interrupt flag
 
-    // debugging tools
-    MAP_GPIO_setOutputHighOnPin(GPIO_PORT_P3, GPIO_PIN2);
     i++;
 
     /* export correct flowrate */
@@ -1002,6 +1009,14 @@ void T32_INT2_IRQHandler(void)
         vspfunc("%f", exportVolumeInhale);
         printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", exportVolumeExhale);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", trans1_offset);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", trans2_offset);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", p_calibIn);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", p_calibEx);
         printfuart(EUSCI_A0_BASE, "%s\n", s);
 
         exportInhaleFlowFlag = false; // reset the flag
@@ -1026,7 +1041,16 @@ void T32_INT2_IRQHandler(void)
         vspfunc("%f", exportVolumeInhale);
         printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", exportVolumeExhale);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", trans1_offset);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", trans2_offset);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", p_calibIn);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", p_calibEx);
         printfuart(EUSCI_A0_BASE, "%s\n", s);
+
         exportExhaleFlowFlag = false; // reset flag
     }
     else
@@ -1046,10 +1070,17 @@ void T32_INT2_IRQHandler(void)
         vspfunc("%f", 0);
         printfuart(EUSCI_A0_BASE, "%s,", s);
         vspfunc("%f", 0);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", 0);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", 0);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", 0);
+        printfuart(EUSCI_A0_BASE, "%s,", s);
+        vspfunc("%f", 0);
         printfuart(EUSCI_A0_BASE, "%s\n", s);
     }
 
-    MAP_GPIO_setOutputLowOnPin(GPIO_PORT_P3, GPIO_PIN2); //debugging pin
 }
 
 /*******************************************************************************
